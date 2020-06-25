@@ -1,6 +1,7 @@
 import dolfin as df
 import os
 from . import *
+from mshr import *
 from common.io import mpi_is_root, load_mesh
 from common.bcs import Fixed, Pressure, NoSlip
 #
@@ -115,9 +116,11 @@ def problem():
 
 
 def mesh(H=0.41, L=2.2, x0=0.2, y0=0.2, R=0.05, res=96, **namespace):
-    mesh = load_mesh(
-        "meshes/cylinderinchannel_H{}_L{}_x{}_y{}_r{}_res{}.h5".format(
-            H, L, x0, y0, R, res))
+    # Create mesh
+    channel = Rectangle(df.Point(0, 0), df.Point(L, H))
+    cylinder = Circle(df.Point(x0, y0), R)
+    domain = channel - cylinder
+    mesh = generate_mesh(domain, res)
     return mesh
 
 
