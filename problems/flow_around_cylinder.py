@@ -115,7 +115,7 @@ def problem():
     return parameters
 
 
-def mesh(H=0.41, L=2.2, x0=0.2, y0=0.2, R=0.05, res=96, **namespace):
+def mesh(H, L, x0, y0, R, res, **namespace):
     # Create mesh
     channel = Rectangle(df.Point(0, 0), df.Point(L, H))
     cylinder = Circle(df.Point(x0, y0), R)
@@ -136,7 +136,6 @@ def initialize(L, H, R,
                 w_init_field[field] = 'df.Function(...)'.
     The work dicts w_ and w_1 are automatically initialized from these
     functions elsewhere in the code.
-
     Note: You only need to specify the initial states that are nonzero.
     """
     w_init_field = dict()
