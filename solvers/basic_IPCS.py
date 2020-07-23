@@ -17,8 +17,9 @@ GL, 2017-05-29
 import dolfin as df
 import math
 from common.functions import ramp, dramp, diff_pf_potential_linearised
-from common.cmd import info_red
-from basic import setup_PF, setup_EC, unit_interval_filter
+#from common.cmd import info_red
+from common.io import mpi_barrier, info_red
+from solvers.basic import setup_PF, setup_EC, unit_interval_filter
 from . import *
 from . import __all__
 import numpy as np
@@ -47,7 +48,7 @@ def setup(tstep, test_functions, trial_functions, w_, w_1, bcs, permittivity,
           solutes, enable_PF, enable_EC, enable_NS,
           surface_tension, dt, interface_thickness,
           grav_const, pf_mobility, pf_mobility_coeff,
-          use_iterative_solvers, use_pressure_stabilization,
+          use_iterative_solvers, use_pressure_stabilization,dirichlet_bcs, neumann_bcs,
           **namespace):
     """ Set up problem. """
     # Constant
@@ -79,6 +80,7 @@ def setup(tstep, test_functions, trial_functions, w_, w_1, bcs, permittivity,
     else:
         # Defaults to phase 1 if phase field is disabled
         phi_ = phi_1 = 1.
+        g_ = g_1 = None
 
     # Electrochemistry
     if enable_EC:
@@ -93,6 +95,8 @@ def setup(tstep, test_functions, trial_functions, w_, w_1, bcs, permittivity,
         cV_1 = df.split(w_1["EC"])
         c_, V_ = cV_[:num_solutes], cV_[num_solutes]
         c_1, V_1 = cV_1[:num_solutes], cV_1[num_solutes]
+    else:
+        c_ = V_ = c_1 = V_1 = None
 
     M_ = pf_mobility(unit_interval_filter(phi_), gamma)
     M_1 = pf_mobility(unit_interval_filter(phi_1), gamma)
@@ -116,36 +120,39 @@ def setup(tstep, test_functions, trial_functions, w_, w_1, bcs, permittivity,
         beta_.append(ramp(phi_, [solute[4], solute[5]]))
         dbeta.append(dramp([solute[4], solute[5]]))
 
-    rho_e = sum([c_e*z_e for c_e, z_e in zip(c, z)])  # Sum of trial functions
-    rho_e_ = sum([c_e*z_e for c_e, z_e in zip(c_, z)])  # Sum of current sol.
+    if enable_EC:
+        rho_e = sum([c_e*z_e for c_e, z_e in zip(c, z)])  # Sum of trial functions
+        rho_e_ = sum([c_e*z_e for c_e, z_e in zip(c_, z)])  # Sum of current sol.
+    else:
+        rho_e_ = None
 
     if tstep == 0 and enable_NS:
-        solve_initial_pressure(w_["NSp"], p, q, u, v, bcs["NSp"],
+        solve_initial_pressure(w_["NSp"], p, q, u, v, dirichlet_bcs["NSp"],
                                M_, g_, phi_, rho_, rho_e_, V_,
                                drho, sigma_bar, eps, grav, dveps,
                                enable_PF, enable_EC)
 
     solvers = dict()
     if enable_PF:
-        solvers["PF"] = setup_PF(w_["PF"], phi, g, psi, h, bcs["PF"],
+        solvers["PF"] = setup_PF(w_["PF"], phi, g, psi, h, dirichlet_bcs["PF"],
                                  phi_1, u_1, M_1, c_1, V_1,
                                  per_tau, sigma_bar, eps, dbeta, dveps,
                                  enable_NS, enable_EC,
                                  use_iterative_solvers)
 
     if enable_EC:
-        solvers["EC"] = setup_EC(w_["EC"], c, V, b, U, rho_e, bcs["EC"], c_1,
+        solvers["EC"] = setup_EC(w_["EC"], c, V, b, U, rho_e, dirichlet_bcs["EC"], c_1,
                                  u_1, K_, veps_, phi_, per_tau, z, dbeta,
                                  enable_NS, enable_PF,
                                  use_iterative_solvers)
 
     if enable_NS:
         solvers["NSu"] = setup_NSu(
-            u, v, u_, p_, bcs["NSu"],
+            u, v, u_, p_, dirichlet_bcs["NSu"],
             u_1, p_1, phi_, rho_, rho_1, g_, M_, nu_, rho_e_, V_,
             dt, drho, sigma_bar, eps, dveps, grav,
             enable_PF, enable_EC)
-        solvers["NSp"] = setup_NSp(p, q, bcs["NSp"], u_, p_, p_1, rho_, dt)
+        solvers["NSp"] = setup_NSp(p, q, dirichlet_bcs["NSp"], u_, p_, p_1, rho_, dt)
 
     return dict(solvers=solvers)
 
@@ -225,15 +232,26 @@ def setup_NSp(p, q, bcs_NSp, u_, p_, p_1, rho_, dt):
 
 
 def solve(tstep, w_, w_1, w_tmp, solvers,
-          enable_PF, enable_EC, enable_NS,
+          enable_PF, enable_EC, enable_NS,freeze_NSPF,
           **namespace):
     """ Solve equations. """
     timer_outer = df.Timer("Solve system")
-    for subproblem, enable in zip(["PF", "EC"], [enable_PF, enable_EC]):
+    # for subproblem, enable in zip(["PF", "EC"], [enable_PF, enable_EC]):
+    #         timer_inner = df.Timer("Solve subproblem " + subproblem)
+    #         mpi_barrier()
+    #         #df.mpi_comm_world().barrier()
+    #         solvers[subproblem].solve()
+    #         timer_inner.stop()
+    for subproblem, enable in zip(["PF", "EC"],
+                              [enable_PF and not freeze_NSPF,
+                               enable_EC,
+                               enable_NS and not freeze_NSPF]):
+        if enable:
             timer_inner = df.Timer("Solve subproblem " + subproblem)
-            df.mpi_comm_world().barrier()
+            mpi_barrier()
             solvers[subproblem].solve()
             timer_inner.stop()
+            
     if enable_NS:
         # timer = df.Timer("NS: Assemble matrices")
         # A1 = df.assemble(solvers["NSu"]["a1"])
@@ -254,7 +272,7 @@ def solve(tstep, w_, w_1, w_tmp, solvers,
         bcs_u = solvers["NSu"]["bcs"]
 
         while du > tol and i_iter < max_num_iterations:
-            print du[0]
+            print(du[0])
             i_iter += 1
             du[0] = 0.
             # Step 1: Tentative velocity
