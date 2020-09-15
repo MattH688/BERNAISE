@@ -2,7 +2,7 @@ import dolfin as df
 import os
 from . import *
 from common.io import mpi_is_root
-from common.bcs import Fixed
+from common.bcs import Fixed, Pressure
 from common.functions import max_value
 __author__ = "Gaute Linga"
 
@@ -45,6 +45,9 @@ def problem():
         dt=0.08,
         t_0=0.,
         T=8.,
+        enable_NS=True,
+        enable_PF=True,
+        enable_EC=False,
         grid_spacing=1./32,
         interface_thickness=0.03,
         solutes=solutes,
@@ -55,10 +58,12 @@ def problem():
         V_right=0.,
         surface_tension=5.,
         concentration_init=10.,
-        pf_mobility_coeff=0.00002,
-        density=[200., 100.],
-        viscosity=[10., 1.],
-        permittivity=[1., 1.]
+        pf_mobility_coeff=0.0000705,
+        density=[1000, 998.2],
+        viscosity=[6.71e-3,1.003e-3],
+        permittivity=[1., 1.],
+        #
+        inlet_velocity=0.5,
     )
     return parameters
 
@@ -70,13 +75,20 @@ def mesh(Lx=1, Ly=5, grid_spacing=1./16, **namespace):
     return m
 
 
-def initialize(Lx, Ly, rad_init, interface_thickness, solutes,
+def initialize(Lx, Ly, rad_init, interface_thickness, solutes, inlet_velocity,
                concentration_init, restart_folder, field_to_subspace,
                enable_NS, enable_PF, enable_EC, **namespace):
     """ Create the initial state. """
     w_init_field = dict()
     if not restart_folder:
         x0, y0, rad0, c0 = Lx/4, Ly/2, rad_init, concentration_init
+        if enable_NS:
+            try:
+                subspace = field_to_subspace["u"].collapse()
+            except:
+                subspace = field_to_subspace["u"]
+            u_init = velocity_init(Lx, Ly, inlet_velocity)
+            w_init_field["u"] = df.interpolate(u_init, subspace)
         # Initialize phase field
         if enable_PF:
             w_init_field["phi"] = initial_pf(
@@ -93,7 +105,7 @@ def initialize(Lx, Ly, rad_init, interface_thickness, solutes,
 
 
 def create_bcs(field_to_subspace, Lx, Ly, solutes,
-               V_left, V_right,
+               V_left, V_right, inlet_velocity,
                enable_NS, enable_PF, enable_EC,
                **namespace):
     """ The boundary conditions are defined in terms of field. """
@@ -104,6 +116,9 @@ def create_bcs(field_to_subspace, Lx, Ly, solutes,
         right=[Right(Lx)]
     )
 
+    velocity_expr = velocity_init(Lx, Ly, inlet_velocity)
+    velocity_in = Fixed(velocity_expr)
+    pressure_out = Pressure(0.0)
     noslip = Fixed((0., 0.))
 
     bcs = dict()
@@ -115,9 +130,8 @@ def create_bcs(field_to_subspace, Lx, Ly, solutes,
 
     if enable_NS:
         bcs["wall"]["u"] = noslip
-        bcs["left"]["u"] = noslip
-        bcs["right"]["u"] = noslip
-        bcs_pointwise["p"] = (0., "x[0] < DOLFIN_EPS && x[1] < DOLFIN_EPS")
+        bcs["left"]["u"] = velocity_in
+        bcs["right"]["p"] = pressure_out
 
     if enable_EC:
         bcs["left"]["V"] = Fixed(V_left)
@@ -145,6 +159,10 @@ def initial_c(x, y, rad, c_init, eps, function_space):
                                 c_init=c_init, degree=2)
     return df.interpolate(c_init_expr, function_space)
 
+def velocity_init(L, H, inlet_velocity, degree=2):
+    return df.Expression(
+        ("4*U*x[1]*(H-x[1])/pow(H, 2)", "0.0"),
+        L=L, H=H, U=inlet_velocity, degree=degree)
 
 def tstep_hook(t, tstep, **namespace):
     info_blue("Timestep = {}".format(tstep))
