@@ -5,7 +5,7 @@ More specific info will follow in a later commit.
 import dolfin as df
 from common.cmd import parse_command_line, help_menu
 from common.io import create_initial_folders, load_checkpoint, save_solution, \
-    load_parameters, load_mesh
+    load_parameters, load_mesh, mpi_barrier, mpi_is_root, mpi_bcast
 
 __author__ = "Gaute Linga"
 
@@ -56,12 +56,16 @@ for name, (family, degree, is_vector) in base_elements.items():
 
 # Declare function spaces
 spaces = dict()
+
+# print(mesh)
+
 for name, subproblem in subproblems.items():
     if len(subproblem) > 1:
         spaces[name] = df.FunctionSpace(
             mesh, df.MixedElement(
-                [elements[s["element"]] for s in subproblem]),
+            [elements[s["element"]] for s in subproblem]),
             constrained_domain=constrained_domain(**vars()))
+
     # If there is only one field in the subproblem, don't bother with
     # the MixedElement.
     elif len(subproblem) == 1:
@@ -82,7 +86,7 @@ for name, subproblem in subproblems.items():
         for i, s in enumerate(subproblem):
             field = s["name"]
             fields.append(field)
-            field_to_subspace[field] = spaces[name].sub(i)
+            field_to_subspace[field] = spaces[name].sub(i)#
             field_to_subproblem[field] = (name, i)
     else:
         field = subproblem[0]["name"]
@@ -90,6 +94,7 @@ for name, subproblem in subproblems.items():
         field_to_subspace[field] = spaces[name]
         field_to_subproblem[field] = (name, -1)
 
+# print(field_to_subspace)
 
 # Create initial folders for storing results
 newfolder, tstepfiles = create_initial_folders(folder, restart_folder,
@@ -98,6 +103,7 @@ newfolder, tstepfiles = create_initial_folders(folder, restart_folder,
 # Create overarching test and trial functions
 test_functions = dict()
 trial_functions = dict()
+
 for name, subproblem in subproblems.items():
     if len(subproblem) > 1:
         test_functions[name] = df.TestFunctions(spaces[name])
@@ -105,6 +111,8 @@ for name, subproblem in subproblems.items():
     else:
         test_functions[name] = df.TestFunction(spaces[name])
         trial_functions[name] = df.TrialFunction(spaces[name])
+
+mpi_barrier()
 
 # Create work dictionaries for all subproblems
 w_ = dict((subproblem, df.Function(space, name=subproblem))
@@ -127,6 +135,7 @@ for name, subproblem in subproblems.items():
 # If continuing from previously, restart from checkpoint
 load_checkpoint(restart_folder, w_, w_1)
 
+
 # Get boundary conditions, from fields to subproblems
 bcs_tuple = create_bcs(**vars())
 if len(bcs_tuple) == 3:
@@ -138,16 +147,36 @@ else:
     info_on_red("Wrong implementation of create_bcs.")
     exit()
 
-# Set up subdomains
-subdomains = df.MeshFunction("size_t", mesh, mesh.topology().dim()-1)
-subdomains.set_all(0)
 boundary_to_mark = dict()
 mark_to_boundary = dict()
-for i, (boundary_name, markers) in enumerate(boundaries.items()):
-    for marker in markers:
-        marker.mark(subdomains, i+1)
-    boundary_to_mark[boundary_name] = i+1
-    mark_to_boundary[i] = boundary_name
+
+# Set up subdomains
+if not "import_mesh" in parameters:
+    subdomains = df.MeshFunction("size_t", mesh, mesh.topology().dim()-1)
+    subdomains.set_all(0)
+    for i, (boundary_name, markers) in enumerate(boundaries.items()):
+        for marker in markers:
+            marker.mark(subdomains, i+1)
+        boundary_to_mark[boundary_name] = i+1
+        mark_to_boundary[i] = boundary_name
+else: # Import mesh defined subdomains (similar to bcs)
+    # Import facet_domains
+    mvc = df.MeshValueCollection("size_t", mesh, dim-1) 
+    with df.XDMFFile(parameters["subdomains_file"]) as infile:
+        infile.read(mvc, "name_to_read")
+    subdomains = df.cpp.mesh.MeshFunctionSizet(mesh, mvc)
+    boundary_to_mark = boundaries_Facet
+    i = 0
+    for key, value in boundary_to_mark.items() :
+        #print (key, value)
+        mark_to_boundary[i] = key
+        i += 1
+        
+# print(boundaries_Facet)
+# print(mark_to_boundary)
+# print(subdomains)
+# print(mark_to_boundary[1])
+# print(boundary_to_mark["inlet"])
 
 # Subdomains check
 if dump_subdomains:
@@ -163,18 +192,42 @@ for subproblem_name in subproblems.keys():
 neumann_bcs = dict()
 for field in fields:
     neumann_bcs[field] = dict()
+    
+#print("Dictionary NBCs: ", neumann_bcs)
 
 for boundary_name, bcs_fields in bcs.items():
     for field, bc in bcs_fields.items():
         subproblem_name = field_to_subproblem[field][0]
         subspace = field_to_subspace[field]
+        #if not "import_mesh" in parameters:
         mark = boundary_to_mark[boundary_name]
         if bc.is_dbc():
-            dirichlet_bcs[subproblem_name].append(
-                bc.dbc(subspace, subdomains, mark))
-        if bc.is_nbc():
-            neumann_bcs[field][boundary_name] = bc.nbc()
+            #print(isinstance(mark, int))
+            if isinstance(mark, int):
+                dirichlet_bcs[subproblem_name].append(
+                    bc.dbc(subspace, subdomains, mark))
+            else: # Is an array
+                for m in mark:
+                    dirichlet_bcs[subproblem_name].append(
+                        bc.dbc(subspace, subdomains, m))
 
+        if bc.is_nbc():
+            # if isinstance(mark, int):
+            neumann_bcs[field][boundary_name] = bc.nbc()
+                # neumann_bcs[subproblem_name].append(
+                #     bc.nbc(subspace, subdomains, mark))
+            # else: # Is an array
+            #     for m in mark:
+            #         print(m)
+            #         neumann_bcs[field].append(
+            #             bc.nbc(subspace, subdomains, m))
+                    #neumann_bcs[field][boundary_name] = bc.nbc()
+                    # We need to import something here for array?
+
+
+# print(dirichlet_bcs)
+# print(neumann_bcs)
+# time.set(5)
 # Pointwise dirichlet bcs
 for field, (value, c_code) in bcs_pointwise.items():
     subproblem_name = field_to_subproblem[field][0]
@@ -191,6 +244,8 @@ normal = df.FacetNormal(mesh)
 
 # Initialize solutions
 w_init_fields = initialize(**vars())
+# print(w_init_fields)
+# time.sleep(5)
 if w_init_fields:
     for name, subproblem in subproblems.items():
         w_init_vector = []
@@ -211,6 +266,9 @@ if w_init_fields:
                     for j in range(num_subspaces):
                         w_init_vector.append(w_init_field.sub(j))
             # assert len(w_init_vector) == w_[name].value_size()  
+            # print("inlet vector: ", tuple(w_init_vector))
+            # print("Function Space: ", w_[name].function_space())
+            #time.set(5)
             w_init = df.project(
                 df.as_vector(tuple(w_init_vector)), w_[name].function_space(),
                 solver_type="gmres", preconditioner_type="default")
