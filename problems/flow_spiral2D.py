@@ -17,14 +17,14 @@ def FaceLength(faceNum, mesh, subdomains_file, dim):
     if mpi_is_root():
         print(faceNum)
 
-    print("Node: ", MPI_rank, "Mesh Cells: ", mesh.cells().size)
+    # Display how mesh is separated
+    # print("Node: ", MPI_rank, "Mesh Cells: ", mesh.cells().size)
     
+    # Import subdomains
     mvc = df.MeshValueCollection("size_t", mesh, dim-1)
     with df.XDMFFile(mpi_comm(), subdomains_file) as infile:
         infile.read(mvc, "name_to_read")
     facet_domains = df.cpp.mesh.MeshFunctionSizet(mesh, mvc)
-
-    print("Hi112")
 
     ## Calculate limits so inflow parabolic can work on co-ordinates not at 0
 
@@ -39,12 +39,8 @@ def FaceLength(faceNum, mesh, subdomains_file, dim):
     # Retrive all co-ords as element for desired face
     It_facet = df.SubsetIterator(facet_domains,faceNum)
     mpi_barrier()
-
-    # if It_facet == faceNum:
-
-    # It_facet = df.SubsetIterator(facet_domains,faceNum)
-    # print("Faces: ", It_facet)
-
+    # print("Faces: ", df.SubsetIterator(facet_domains,faceNum))
+    
 
     #https://fenicsproject.org/qa/13995/print-coordinate-of-boundary-seperately-i-e-left-boundary/
     #It_mesh = vertices([facet_domains.array() == 26])
