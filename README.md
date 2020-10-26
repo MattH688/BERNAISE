@@ -3,7 +3,7 @@
 It is written in Python and built on the FEniCS project, which in turn effectively interfaces to optimized linear algebra backends such as PETSc.
 The solver is described and documented in [Asger Bolet's, Gaute Linga's and Joachim Mathiesen's paper](https://doi.org/10.3389/fphy.2019.00021).
 
-This fork is focused towards microfluidics in particular the study of droplet deformation under flow as well as within electric fields. The changes maintain the base functionality whilst adding the importing of complex geometries with subdomains in XDMF file format using [Meshio](https://github.com/nschloe/meshio). This allows for CAD > [GMSH](https://gmsh.info/)/[Netgen](https://ngsolve.org/) > BERNAISE pipeline for importing complex meshes.
+This fork is focused towards microfluidics in particular the study of droplet deformation under flow as well as within electric fields. The changes maintain the base functionality whilst adding the importing of complex geometries with subdomains in XDMF file format using [Meshio](https://github.com/nschloe/meshio). This allows for CAD > [GMSH](https://gmsh.info/)/[Netgen](https://ngsolve.org/) > BERNAISE pipeline for importing complex meshes. See the [wiki for more information](https://github.com/MattH688/BERNAISE/wiki/Why-use-a-Computer-Aided-Design-(CAD)-mesh).
 
 <!-- <p align="center">
     <img src="http://www.nbi.dk/~linga/bernaise/droplet.gif" width=122 height=254 alt="Buoyancy-driven droplet"/>
