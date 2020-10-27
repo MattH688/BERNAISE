@@ -1,0 +1,16 @@
+<Xdmf Version="3.0">
+  <Domain>
+    <Grid Name="Grid">
+      <Information Name="Information" Value="0"><![CDATA[<main/>]]></Information>
+      <Geometry GeometryType="XYZ">
+        <DataItem DataType="Float" Dimensions="9617 3" Format="HDF" Precision="8">mf_flowfocus.h5:/data0</DataItem>
+      </Geometry>
+      <Topology TopologyType="Polyline" NumberOfElements="809">
+        <DataItem DataType="Int" Dimensions="809 2" Format="HDF" Precision="8">mf_flowfocus.h5:/data1</DataItem>
+      </Topology>
+      <Attribute Name="name_to_read" AttributeType="Scalar" Center="Cell">
+        <DataItem DataType="Int" Dimensions="809" Format="HDF" Precision="8">mf_flowfocus.h5:/data2</DataItem>
+      </Attribute>
+    </Grid>
+  </Domain>
+</Xdmf>
