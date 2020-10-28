@@ -5,7 +5,14 @@ The solver is described and documented in [Asger Bolet's, Gaute Linga's and Joac
 
 This fork is focused towards microfluidics in particular the study of droplet deformation under flow as well as within electric fields. The changes maintain the base functionality whilst adding the importing of complex geometries with subdomains in XDMF file format using [Meshio](https://github.com/nschloe/meshio). This allows for CAD > [GMSH](https://gmsh.info/)/[Netgen](https://ngsolve.org/) > BERNAISE pipeline for importing complex meshes. See the [wiki for more information](https://github.com/MattH688/BERNAISE/wiki/Why-use-a-Computer-Aided-Design-(CAD)-mesh%3F).
 
-<!-- <p align="center">
+### Flow focusing for creating microdroplets (oil in water model)
+<img src="https://github.com/MattH688/BERNAISE/blob/master/documentation/FlowFocusing2.gif" width=806 height=398 alt="Microfluidic flow focusing for creating microdroplets"/>
+
+[Flow focusing demo available here](https://github.com/MattH688/BERNAISE/blob/master/problems/flow_focusing.py)
+
+<!--
+![](https://github.com/MattH688/BERNAISE/blob/master/documentation/FlowFocusing2.gif | width=100)
+<p align="center">
     <img src="http://www.nbi.dk/~linga/bernaise/droplet.gif" width=122 height=254 alt="Buoyancy-driven droplet"/>
     <br /><b>Buoyancy-driven droplet.</b>
 </p>
