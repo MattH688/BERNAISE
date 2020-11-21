@@ -1,10 +1,11 @@
 import os
 from dolfin import MPI, XDMFFile, HDF5File, Mesh
 import dolfin as df
+import numpy as np
 from .cmd import info_red, info_cyan, MPI_rank, MPI_size, info_on_red
 import simplejson as json
 from xml.etree import cElementTree as ET
-import mpi4py
+#import mpi4py
 
 __author__ = "Gaute Linga"
 __date__ = "2017-05-26"
@@ -25,7 +26,8 @@ def mpi_is_root():
 
 def mpi_barrier():
     """ Safe barrier """
-    mpi4py.MPI.COMM_WORLD.Barrier()
+    df.MPI.barrier(df.MPI.comm_world)
+    #mpi4py.MPI.COMM_WORLD.Barrier()
 
 
 def mpi_comm():
@@ -33,7 +35,24 @@ def mpi_comm():
         # Consider removing support for earlier versions.
         return MPI.comm_world
     return df.mpi_comm_world()
-
+    
+def mpi_bcast(data, rank):
+    """ Broadcast values """
+    # if MPI_rank == rank:
+        #data = MPI.comm_world.bcast(data, root=rank)
+    data = df.MPI.comm_world.bcast(data, root=rank)
+    return data
+        
+def mpi_gather(data, rank):
+    """ Gather values """
+    data = df.MPI.comm_world.gather(data, root=rank)
+    return data
+    
+# def mpi_gatherv(sendbuf, rank):
+#     """ Gather values (Memory chunk) """
+#     df.MPI.comm_world.gather(data, root=rank)
+#     df.MPI.comm_world.gatherv(sendbuf=sendbuf, recvbuf=(recvbuf, sendcounts), root=root
+#     return data
 
 def makedirs_safe(folder):
     """ Make directory in a safe way. """
@@ -259,17 +278,46 @@ def parse_xdmf(xml_file, get_mesh_address=False):
 
 def get_mesh_max(mesh, dim):
     coords = mesh.coordinates()[:]
-    comm = mpi4py.MPI.COMM_WORLD
     max_x_loc = coords[:, dim].max()
-    max_x = comm.reduce(max_x_loc, op=mpi4py.MPI.MAX, root=0)
-    max_x_loc = comm.bcast(max_x, root=0)
+    max_x = df.MPI.comm_world.reduce(max_x_loc, op=df.MPI.max, root=0)
+    max_x_loc = df.MPI.comm_world.bcast(max_x, root=0)
     return max_x_loc
 
 
 def get_mesh_min(mesh, dim):
     coords = mesh.coordinates()[:]
-    comm = mpi4py.MPI.COMM_WORLD
     min_x_loc = coords[:, dim].min()
-    min_x = comm.reduce(min_x_loc, op=mpi4py.MPI.MIN, root=0)
-    min_x_loc = comm.bcast(min_x, root=0)
+    min_x = df.MPI.comm_world.reduce(min_x_loc, op=df.MPI.min, root=0)
+    min_x_loc = df.MPI.comm_world.bcast(min_x, root=0)
     return min_x_loc
+    
+def get_dt_CFL(mesh, mu):
+    # Calculate dt as per CFL (with CFLmax = 0.5)
+    deltaX = get_hmin(mesh)
+    # dt = 0.5*deltaX**2/mu - I believe is a Taylor series expansion including numerical diffusion, or numerical viscosity
+    dt = (0.5*deltaX)/mu # -  Courant Number (<1) * smallest cell size in mesh / velocity magnitude
+    # dt = 1E-2*dt # Just for testing
+    return dt
+    # From - https://fenicsproject.discourse.group/t/cant-run-navier-stokes-solution-in-parallel/4003/3
+    # Modified for velocity based on https://en.wikipedia.org/wiki/Courant%E2%80%93Friedrichs%E2%80%93Lewy_condition
+    # Read more here: https://www.simscale.com/blog/2017/08/cfl-condition/
+    
+def get_hmin(mesh):
+    # Get minimum mesh cell size
+    hmin = mesh.hmin() # minimum mesh size
+    # Gather all hmin's to node 0
+    hmin = mpi_gather(hmin, 0) # MPI.comm_world.reduce doesn't work with floats
+    hminX = np.amin(hmin) # Find minimum from all values in numpy array
+    hminX = mpi_bcast(hminX, 0) # Broadcast values back from node 0
+
+    return hminX
+    
+def get_hman(mesh):
+    # Get maximum mesh cell size
+    hmax = mesh.hmax() # minimum mesh size
+    # Gather all hmin's to node 0
+    hmax = mpi_gather(hmax, 0) # MPI.comm_world.reduce doesn't work with floats
+    hmaxX = np.amax(hmax) # Find minimum from all values in numpy array
+    hmaxX = mpi_bcast(hmaxX, 0) # Broadcast values back from node 0
+
+    return hmanX
