@@ -1,20 +1,13 @@
 """This module defines the basic solver with incremental pressure correction.
-
 Binary electrohydrodynamics solved using a partial splitting approach and
 linearisation. The problem is split between the following subproblems.
-
 * PF: Same as basic
-
 * EC: Same as basic
-
 * NSu: Velocity. 
-
 * NSp: Pressure.
-
 GL, 2017-05-29
 Matthew Hockley, 2020-10 based upon FEniCS documented Demo:
 https://fenicsproject.org/olddocs/dolfin/2016.1.0/python/demo/documented/navier-stokes/python/documentation.html
-
 """
 import dolfin as df
 import math
@@ -43,152 +36,25 @@ def get_subproblems(base_elements, solutes,
                               for solute in solutes]
                              + [dict(name="V", element="V")])
     return subproblems
-    
-def setup_PF(w_PF, phi, g, psi, h,
-             dx, ds, normal,
-             dirichlet_bcs, neumann_bcs, boundary_to_mark,
-             phi_1, u_1, M_1, c_1, V_1,
-             per_tau, sigma_bar, eps,
-             dbeta, dveps,
-             enable_NS, enable_EC,
-             use_iterative_solvers,
-             q_rhs):
-    """ Set up phase field subproblem. """
-
-    F_phi = (per_tau*(phi-unit_interval_filter(phi_1))*psi*dx +
-             M_1*df.dot(df.grad(g), df.grad(psi))*dx)
-    if enable_NS:
-        F_phi += - phi*df.dot(u_1, df.grad(psi))*dx \
-                 + phi*psi*df.dot(u_1, normal)*df.ds \
-                 - M_1*psi*df.dot(df.grad(phi), normal)*df.ds
-        # F_phi += df.div(phi*u_1)*psi*dx
-    F_g = (g*h*dx
-           - sigma_bar*eps*df.dot(df.nabla_grad(phi), df.nabla_grad(h))*dx
-           - sigma_bar/eps*(
-               diff_pf_potential_linearised(phi,
-                                            unit_interval_filter(
-                                                phi_1))*h*dx))
-    if enable_EC:
-        F_g += (-sum([dbeta_i*ci_1*h*dx
-                      for dbeta_i, ci_1 in zip(dbeta, c_1)])
-                + 0.5*dveps*df.dot(df.nabla_grad(V_1),
-                                   df.nabla_grad(V_1))*h*dx)
-
-    for boundary_name, costheta in neumann_bcs["phi"].items():
-        fw_prime = diff_pf_contact_linearised(phi, unit_interval_filter(phi_1))
-        # Should be just surface tension!
-        mark = boundary_to_mark[boundary_name] # Test if array or int
-        for m in mark: # In case multiple boundaries are required
-            # Adds additional boundary conditions to PF
-            F_g += sigma_bar*costheta*fw_prime*h*ds(m)
-
-    if "phi" in q_rhs:       
-        F_phi += -q_rhs["phi"]*psi*dx
-
-    F = F_phi + F_g
-    a, L = df.lhs(F), df.rhs(F)
-
-    problem = df.LinearVariationalProblem(a, L, w_PF, dirichlet_bcs)
-    solver = df.LinearVariationalSolver(problem)
-
-    if use_iterative_solvers:
-        solver.parameters["linear_solver"] = "gmres"
-        #solver.parameters["preconditioner"] = "hypre_euclid"
-
-    return solver
-    
-    
-def setup_EC(w_EC, c, V, b, U, rho_e,
-             dx, ds, normal,
-             dirichlet_bcs, neumann_bcs, boundary_to_mark,
-             c_1, u_1, K_, veps_, phi_,
-             solutes,
-             per_tau, z, dbeta,
-             enable_NS, enable_PF,
-             use_iterative_solvers,
-             q_rhs):
-    """ Set up electrochemistry subproblem. """
-    F_c = []
-    for ci, ci_1, bi, Ki_, zi, dbetai, solute in zip(
-            c, c_1, b, K_, z, dbeta, solutes):
-        F_ci = (per_tau*(ci-ci_1)*bi*dx +
-                Ki_*df.dot(df.nabla_grad(ci), df.nabla_grad(bi))*dx)
-        if zi != 0:
-            F_ci += Ki_*zi*ci_1*df.dot(df.nabla_grad(V), df.nabla_grad(bi))*dx
-
-        if enable_PF:
-            F_ci += Ki_*ci*dbetai*df.dot(df.nabla_grad(phi_),
-                                         df.nabla_grad(bi))*dx
-
-        if enable_NS:
-            # F_ci += df.div(ci*u_1)*bi*dx
-            F_ci += - ci*df.dot(u_1, df.grad(bi))*dx \
-                    + ci*bi*df.dot(u_1, normal)*df.ds
-
-        if solute[0] in q_rhs:
-            print("Using Diffusion", solute[0])
-            F_ci += - q_rhs[solute[0]]*bi*dx
-
-        F_c.append(F_ci)
-    F_V = veps_*df.dot(df.nabla_grad(V), df.nabla_grad(U))*dx
-    for boundary_name, sigma_e in neumann_bcs["V"].items():
-        F_V += -sigma_e*U*ds(boundary_to_mark[boundary_name])
-    if rho_e != 0:
-        F_V += -rho_e*U*dx
-    if "V" in q_rhs:
-        F_V += q_rhs["V"]*U*dx
-
-    F = sum(F_c) + F_V
-    a, L = df.lhs(F), df.rhs(F)
-
-    problem = df.LinearVariationalProblem(a, L, w_EC, dirichlet_bcs)
-    solver = df.LinearVariationalSolver(problem)
-
-    if use_iterative_solvers:
-        solver.parameters["linear_solver"] = "gmres"
-        # solver.parameters["preconditioner"] = "hypre_euclid"
-
-    return solver
 
 
-def setup(mesh, tstep, test_functions, trial_functions,
-          w_, w_1,
-          ds, dx, normal,
-          dirichlet_bcs, neumann_bcs, boundary_to_mark,
-          permittivity, density, viscosity,
-          solutes,
-          enable_PF, enable_EC, enable_NS,
+def setup(tstep, test_functions, trial_functions, w_, w_1, bcs, permittivity,
+          density, viscosity, mesh,
+          solutes, enable_PF, enable_EC, enable_NS,
           surface_tension, dt, interface_thickness,
-          grav_const,
-          grav_dir,
-          friction_coeff,
-          pf_mobility,
-          pf_mobility_coeff,
-          use_iterative_solvers, use_pressure_stabilization,
-          comoving_velocity,
-          p_lagrange,
-          q_rhs,
+          grav_const, grav_dir, pf_mobility, pf_mobility_coeff,
+          use_iterative_solvers, use_pressure_stabilization,dirichlet_bcs, neumann_bcs,
           **namespace):
-
-#setup(tstep, test_functions, trial_functions, w_, w_1, bcs, permittivity,
-          # density, viscosity, mesh,
-          # solutes, enable_PF, enable_EC, enable_NS,
-          # surface_tension, dt, interface_thickness,
-          # grav_const, grav_dir, pf_mobility, pf_mobility_coeff,
-          # use_iterative_solvers, use_pressure_stabilization,dirichlet_bcs, neumann_bcs,
-          # **namespace):
     """ Set up problem. """
-    
     # Constant
     dim = mesh.geometry().dim()
     sigma_bar = surface_tension*3./(2*math.sqrt(2))
     per_tau = df.Constant(1./dt)
+    #grav = df.Constant((0., -grav_const))
     grav = df.Constant(tuple(grav_const*np.array(grav_dir[:dim])))
     gamma = pf_mobility_coeff
     eps = interface_thickness
-    fric = df.Constant(friction_coeff)
-    u_comoving = df.Constant(tuple(comoving_velocity[:dim]))
-    
+
     # Navier-Stokes
     if enable_NS:
         u = trial_functions["NSu"]
@@ -229,16 +95,13 @@ def setup(mesh, tstep, test_functions, trial_functions,
     else:
         c_ = V_ = c_1 = V_1 = None
 
-    phi_flt_ = unit_interval_filter(phi_)
-    phi_flt_1 = unit_interval_filter(phi_1)
-
-    M_ = pf_mobility(phi_flt_, gamma)
-    M_1 = pf_mobility(phi_flt_1, gamma)
-    mu_ = ramp(phi_flt_, viscosity)
+    M_ = pf_mobility(unit_interval_filter(phi_), gamma)
+    M_1 = pf_mobility(unit_interval_filter(phi_1), gamma)
     nu_ = ramp(unit_interval_filter(phi_), viscosity)
-    rho_ = ramp(phi_flt_, density)
-    rho_1 = ramp(phi_flt_1, density)
-    veps_ = ramp(phi_flt_, permittivity)
+    rho_ = ramp(unit_interval_filter(phi_), density)
+    veps_ = ramp(unit_interval_filter(phi_), permittivity)
+
+    rho_1 = ramp(unit_interval_filter(phi_1), density)
 
     dveps = dramp(permittivity)
     drho = dramp(density)
@@ -255,97 +118,18 @@ def setup(mesh, tstep, test_functions, trial_functions,
         dbeta.append(dramp([solute[4], solute[5]]))
 
     if enable_EC:
-        rho_e = sum([c_e*z_e for c_e, z_e in zip(c, z)])  # Sum of trial func.
-        rho_e_ = sum([c_e*z_e for c_e, z_e in zip(c_, z)])  # Sum of curr. sol.
+        rho_e = sum([c_e*z_e for c_e, z_e in zip(c, z)])  # Sum of trial functions
+        rho_e_ = sum([c_e*z_e for c_e, z_e in zip(c_, z)])  # Sum of current sol.
     else:
         rho_e_ = None
 
+    if tstep == 0 and enable_NS:
+        solve_initial_pressure(w_["NSp"], p, q, u, v, dirichlet_bcs["NSp"],
+                               M_, g_, phi_, rho_, rho_e_, V_,
+                               drho, sigma_bar, eps, grav, dveps,
+                               enable_PF, enable_EC, use_iterative_solvers)
+
     solvers = dict()
-    
-    # # Constant
-    # dim = mesh.geometry().dim()
-    # sigma_bar = surface_tension*3./(2*math.sqrt(2))
-    # per_tau = df.Constant(1./dt)
-    # #grav = df.Constant((0., -grav_const))
-    # grav = df.Constant(tuple(grav_const*np.array(grav_dir[:dim])))
-    # gamma = pf_mobility_coeff
-    # eps = interface_thickness
-
-    # # Navier-Stokes
-    # if enable_NS:
-    #     u = trial_functions["NSu"]
-    #     p = trial_functions["NSp"]
-    #     v = test_functions["NSu"]
-    #     q = test_functions["NSp"]
-
-    #     u_ = w_["NSu"]
-    #     p_ = w_["NSp"]
-    #     u_1 = w_1["NSu"]
-    #     p_1 = w_1["NSp"]
-
-    # # Phase field
-    # if enable_PF:
-    #     phi, g = trial_functions["PF"]
-    #     psi, h = test_functions["PF"]
-
-    #     phi_, g_ = df.split(w_["PF"])
-    #     phi_1, g_1 = df.split(w_1["PF"])
-    # else:
-    #     # Defaults to phase 1 if phase field is disabled
-    #     phi_ = phi_1 = 1.
-    #     g_ = g_1 = None
-
-    # # Electrochemistry
-    # if enable_EC:
-    #     num_solutes = len(trial_functions["EC"])-1
-    #     assert(num_solutes == len(solutes))
-    #     c = trial_functions["EC"][:num_solutes]
-    #     V = trial_functions["EC"][num_solutes]
-    #     b = test_functions["EC"][:num_solutes]
-    #     U = test_functions["EC"][num_solutes]
-
-    #     cV_ = df.split(w_["EC"])
-    #     cV_1 = df.split(w_1["EC"])
-    #     c_, V_ = cV_[:num_solutes], cV_[num_solutes]
-    #     c_1, V_1 = cV_1[:num_solutes], cV_1[num_solutes]
-    # else:
-    #     c_ = V_ = c_1 = V_1 = None
-
-    # M_ = pf_mobility(unit_interval_filter(phi_), gamma)
-    # M_1 = pf_mobility(unit_interval_filter(phi_1), gamma)
-    # nu_ = ramp(unit_interval_filter(phi_), viscosity)
-    # rho_ = ramp(unit_interval_filter(phi_), density)
-    # veps_ = ramp(unit_interval_filter(phi_), permittivity)
-
-    # rho_1 = ramp(unit_interval_filter(phi_1), density)
-
-    # dveps = dramp(permittivity)
-    # drho = dramp(density)
-
-    # dbeta = []  # Diff. in beta
-    # z = []  # Charge z[species]
-    # K_ = []  # Diffusivity K[species]
-    # beta_ = []  # Conc. jump func. beta[species]
-
-    # for solute in solutes:
-    #     z.append(solute[1])
-    #     K_.append(ramp(phi_, [solute[2], solute[3]]))
-    #     beta_.append(ramp(phi_, [solute[4], solute[5]]))
-    #     dbeta.append(dramp([solute[4], solute[5]]))
-
-    # if enable_EC:
-    #     rho_e = sum([c_e*z_e for c_e, z_e in zip(c, z)])  # Sum of trial functions
-    #     rho_e_ = sum([c_e*z_e for c_e, z_e in zip(c_, z)])  # Sum of current sol.
-    # else:
-    #     rho_e_ = None
-
-    # if tstep == 0 and enable_NS:
-    #     solve_initial_pressure(w_["NSp"], p, q, u, v, dirichlet_bcs["NSp"],
-    #                            M_, g_, phi_, rho_, rho_e_, V_,
-    #                            drho, sigma_bar, eps, grav, dveps,
-    #                            enable_PF, enable_EC, use_iterative_solvers)
-
-    #solvers = dict()
     if enable_PF:
         solvers["PF"] = setup_PF(w_["PF"], phi, g, psi, h, dirichlet_bcs["PF"],
                                  phi_1, u_1, M_1, c_1, V_1,
@@ -353,26 +137,15 @@ def setup(mesh, tstep, test_functions, trial_functions,
                                  enable_NS, enable_EC,
                                  use_iterative_solvers)
 
-    # if enable_EC:
-    #     solvers["EC"] = setup_EC(w_["EC"], c, V, b, U, rho_e, dirichlet_bcs["EC"], c_1,
-    #                              u_1, K_, veps_, phi_, per_tau, z, dbeta,
-    #                              enable_NS, enable_PF,
-    #                              use_iterative_solvers)
     if enable_EC:
-        solvers["EC"] = setup_EC(w_["EC"], c, V, b, U, rho_e,
-                                 dx, ds, normal,
-                                 dirichlet_bcs["EC"], neumann_bcs,
-                                 boundary_to_mark,
-                                 c_1, u_1, K_, veps_, phi_flt_,
-                                 solutes,
-                                 per_tau, z, dbeta,
+        solvers["EC"] = setup_EC(w_["EC"], c, V, b, U, rho_e, dirichlet_bcs["EC"], c_1,
+                                 u_1, K_, veps_, phi_, per_tau, z, dbeta,
                                  enable_NS, enable_PF,
-                                 use_iterative_solvers,
-                                 q_rhs)
+                                 use_iterative_solvers)
 
     if enable_NS:
         solvers["NSu"] = setup_NSu(
-            u, v, u_, p_, dirichlet_bcs["NSu"], mesh,
+            u, v, u_, p_, dirichlet_bcs["NSu"],
             u_1, p_1, phi_, rho_, rho_1, g_, M_, nu_, rho_e_, V_,
             dt, drho, sigma_bar, eps, dveps, grav,
             enable_PF, enable_EC, use_iterative_solvers)
@@ -381,7 +154,7 @@ def setup(mesh, tstep, test_functions, trial_functions,
     return dict(solvers=solvers)
 
 
-def setup_NSu(u, v, u_, p_, bcs_NSu, mesh,
+def setup_NSu(u, v, u_, p_, bcs_NSu,
               u_1, p_1, phi_, rho_, rho_1, g_, M_, nu_, rho_e_, V_,
               dt, drho, sigma_bar, eps, dveps, grav,
               enable_PF, enable_EC, use_iterative_solvers):
@@ -389,44 +162,15 @@ def setup_NSu(u, v, u_, p_, bcs_NSu, mesh,
     # Crank-Nicolson velocity
     # u_CN = 0.5*(u_1 + u)
 
-    # F_predict = (
-    #     1./dt * df.sqrt(rho_) * df.dot(df.sqrt(rho_)*u - df.sqrt(rho_1)*u_1, v)*df.dx
-    #     # + rho_*df.inner(df.grad(u), df.outer(u_1, v))*df.dx
-    #     # + 2*nu_*df.inner(df.sym(df.grad(u)), df.grad(v))*df.dx
-    #     # - p_1 * df.div(v)*df.dx
-    #     # + df.div(u)*q*df.dx
-    #     + rho_*df.dot(df.dot(u_1, df.nabla_grad(u)), v)*df.dx
-    #     + 2*nu_*df.inner(df.sym(df.grad(u)), df.sym(df.grad(v)))*df.dx
-    #     - p_1*df.div(v)*df.dx
-    #     - df.dot(rho_*grav, v)*df.dx
-    # )
-
-    # From FEniCS
-    # # Define variational problem for step 1
-    # F1 = rho*dot((u - u_n) / k, v)*dx + \
-    #      rho*dot(dot(u_n, nabla_grad(u_n)), v)*dx \
-    #    + inner(sigma(U, p_n), epsilon(v))*dx \
-    #    + dot(p_n*n, v)*ds - dot(mu*nabla_grad(U)*n, v)*ds \
-    #    - dot(f, v)*dx
-    # a1 = lhs(F1)
-    # L1 = rhs(F1)
-    
-    # Define strain-rate tensor
-    def epsilon(u):
-        return df.sym(df.nabla_grad(u))
-
-    # Define stress tensor
-    def sigma(u, p):
-        return 2*nu_*epsilon(u) - p*df.Identity(len(u))
-
-    U = 0.5*(u_1 + u)
-
     F_predict = (
-        rho_ * df.dot((u - u_1) / dt, v)*df.dx + \
-        rho_ * df.dot(df.dot(u_1, df.nabla_grad(u_1)), v)* df.dx \
-        + df.inner(sigma(U, p_1), epsilon(v))*df.dx \
-        + df.dot(p_1*df.FacetNormal(mesh), v)*df.ds \
-        - df.dot((nu_*df.nabla_grad(U)*df.FacetNormal(mesh)), v)*df.ds \
+        1./dt * df.sqrt(rho_) * df.dot(df.sqrt(rho_)*u - df.sqrt(rho_1)*u_1, v)*df.dx
+        # + rho_*df.inner(df.grad(u), df.outer(u_1, v))*df.dx
+        # + 2*nu_*df.inner(df.sym(df.grad(u)), df.grad(v))*df.dx
+        # - p_1 * df.div(v)*df.dx
+        # + df.div(u)*q*df.dx
+        + rho_*df.dot(df.dot(u_1, df.nabla_grad(u)), v)*df.dx
+        + 2*nu_*df.inner(df.sym(df.grad(u)), df.sym(df.grad(v)))*df.dx
+        - p_1*df.div(v)*df.dx
         - df.dot(rho_*grav, v)*df.dx
     )
 
@@ -446,16 +190,13 @@ def setup_NSu(u, v, u_, p_, bcs_NSu, mesh,
 
     a1, L1 = df.lhs(F_predict), df.rhs(F_predict)
 
-    a3 = df.dot(u, v)*df.dx
-    L3 = df.dot(u_, v)*df.dx - dt*df.dot(df.nabla_grad(p_ - p_1), v)*df.dx
-
     F_correct = (
         df.inner(u - u_, v)*df.dx
         + dt/rho_ * df.inner(df.grad(p_ - p_1), v)*df.dx
     )
     # a3 = df.dot(u, v)*df.dx
     # L3 = df.dot(u_, v)*df.dx - dt*df.dot(df.grad(p_), v)*df.dx
-    # a3, L3 = df.lhs(F_correct), df.rhs(F_correct)
+    a3, L3 = df.lhs(F_correct), df.rhs(F_correct)
 
     solver = dict()
     solver["a1"] = a1
@@ -477,14 +218,11 @@ def setup_NSp(p, q, bcs_NSp, u_, p_, p_1, rho_, dt,use_iterative_solvers):
         1./rho_ * df.dot(df.grad(p - p_1), df.grad(q)) * df.dx
         + 1./dt * df.div(u_) * q * df.dx
     )
-    # # a2 = df.dot(df.grad(p), df.grad(q))*df.dx
-    # # L2 = (df.dot(df.grad(p_1), df.grad(q))*df.dx
-    # #       - (1./dt)*df.div(rho_*u_)*q*df.dx)
-    # # L2 = -(1./dt)*df.div(u_)*q*df.dx
-    # a2, L2 = df.lhs(F_correct), df.rhs(F_correct)
-    
-    a2 = df.dot(df.nabla_grad(p), df.nabla_grad(q))*df.dx
-    L2 = df.dot(df.nabla_grad(p_1), df.nabla_grad(q))*df.dx - (1/dt)*df.div(u_)*q*df.dx
+    # a2 = df.dot(df.grad(p), df.grad(q))*df.dx
+    # L2 = (df.dot(df.grad(p_1), df.grad(q))*df.dx
+    #       - (1./dt)*df.div(rho_*u_)*q*df.dx)
+    # L2 = -(1./dt)*df.div(u_)*q*df.dx
+    a2, L2 = df.lhs(F_correct), df.rhs(F_correct)
 
     solver = dict()
     solver["a2"] = a2
@@ -541,7 +279,7 @@ def solve(tstep, w_, w_1, w_tmp, solvers,
         bcs_u = solvers["NSu"]["bcs"]
 
         while du > tol and i_iter < max_num_iterations:
-            #print(du[0])
+            print(du[0])
             i_iter += 1
             du[0] = 0.
             # Step 1: Tentative velocity
@@ -572,7 +310,7 @@ def solve(tstep, w_, w_1, w_tmp, solvers,
             # solver.solve
             #df.solve(df.lhs(Fu) == df.rhs(Fu), w_["NSu"], bcs_u)
 
-            # du[0] += df.norm(w_["NSu"].vector()-w_tmp["NSu"].vector())
+            du[0] += df.norm(w_["NSu"].vector()-w_tmp["NSu"].vector())
             # timer_0.stop()
 
             # Step 2: Pressure correction
@@ -602,7 +340,7 @@ def solve(tstep, w_, w_1, w_tmp, solvers,
             
             # df.solve(df.lhs(Fp) == df.rhs(Fp), w_["NSp"], bcs_p)
 
-            #w_1["NSp"].assign(w_["NSp"])
+            w_1["NSp"].assign(w_["NSp"])
 
             # timer_1.stop()
 
@@ -630,14 +368,6 @@ def solve(tstep, w_, w_1, w_tmp, solvers,
         # df.solve(df.lhs(Fu_corr) == df.rhs(Fu_corr), w_["NSu"], bcs_u)
 
         timer_2.stop()
-
-    ### Update previous solution
-    # From FEniCS demo, unsure if it will be forgotten when solve() is closed
-    # u_1.assign(u_)
-    # p_1.assign(p_)
-    # Update w_1 with w_ to pass through
-    w_1["NSp"].assign(w_["NSp"])
-    w_1["NSu"].assign(w_["NSu"])
 
     timer_outer.stop()
 
