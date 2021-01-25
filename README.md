@@ -64,7 +64,7 @@ This fork is focused towards microfluidics in particular the study of droplet de
 
 ### Planned features
 * Wiki to aid users in running and implementing demos. [Asger Bolet's, Gaute Linga's and Joachim Mathiesen's paper](https://doi.org/10.3389/fphy.2019.00021) details most of the setup.
-* Adaptive time-stepping based on a local Courant number.
+* ~~Adaptive time-stepping based on a local Courant number.~~ Working Courant number per mesh has been implemented in local models. Working towards "io" script implementation - https://github.com/MattH688/BERNAISE/blob/master/problems/flow_curved_channel.py
 * Examples of droplet deformation within flow and electric fields.
 * Migration to Dolfin-X package (Next generation Dolfin solver).
 
